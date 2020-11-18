@@ -1,44 +1,88 @@
 module Example exposing
     ( loading, error
-    , switchableViews, linkTo, navigation
-    , configurable, Configuration, configuration, verticalPanel, intSlider, floatSlider, colorPicker, ConfigMsg
+    , application, Program, Configuration, tabbed, configuration
+    , Field, intSlider, floatSlider, textField, colorPicker, enumPicker
+    , withTitle, animatedWith, makeFormOnTop, makeFormOnRight, withCustomCss
     )
 
 {-| This module is designed to make certain kinds of example easier to understand by ommitting some of the boring details and yet making them attractive.
+You can get creative with it if you want:
+
+    module MyExample exposing (main)
+
+    import Example as OmittedForBrevity
+
+    view model =
+        case model of
+            Loading ->
+                OmmitedForBrevity.loading
 
 
-## Common Views
+# HTTP
 
-These views help flesh out some of the views for common things that would needlesly complicate an application:
+If your example is doing an HTTP request, Elm will force you to handle some states like what to show when the request is in progress and what happens when it fails. However, your example might be about the "happy path" and everything else is just noise. Here we provide some helper views to show something nicer than `Html.text "Loading..."`, but help keep the focus on what's important.
 
 @docs loading, error
 
 
-## Example Applications
+# Configurable Views
 
-These are application templates that provide simple interactive functionality for certain kinds of examples. They are quite specific to their usecase, so it is worth considering if they are appropriate to the example at hand or wheather they should be custom built.
+A common type of example is trying to demonstrate something that happens in a view. Maybe your example is rendering a cool fractal or 3D scene or just a neat way to render a HTML table. Often such functions can be customised by the user with various parameters. The functions here help you with minimal fuss make your view function interactive:
+
+    module MyExample exposing (main)
+
+    import Example
+
+    type alias Model = -- this is your configuration
+        { foo : Int
+        }
 
 
-### Multi-view Examples
+    view : Model -> Html msg
+    view model =
+        -- do whatever you want here, this your example
+        ...
 
-Some examples consist of multiple tabs (each with its own URL) that simply vary some configuration. This provides a simplified application template to make an example like this.
 
-@docs switchableViews, linkTo, navigation
+    main : Example.Program Model
+    main =
+        Example.configuration
+            { foo = 3 } -- this is your default or initial model
+            -- here you configure your form
+            [ Example.intSlider "Foo count" 0 5 .foo (\value model -> {model | foo = value})]
+            |> Example.withTitle "My cool example" -- you can customize with options
+            |> Example.application view -- Connect it to your view
+
+This gives you a number of built in behaviors:
+
+  - it will render your view function with the default model
+  - it will render alongside it a form that allows the user to edit the model
+  - it serializes the model into the url as a query string, allowing users to share a particularly configured example
+  - no need to write Msg, update functions or HTML forms
+  - easily enable additional features like animations or custom titles...
+
+@docs application, Program, Configuration, tabbed, configuration
 
 
-### Configurable Examples
+## Building forms
 
-Some examples can be made interactive by allowing the user to configure parts of the view with some parameters. This application type will handle managing the model and messages for you. It includes an automatic form builder as well as updating the serialized representation to the URL.
+@docs Field, intSlider, floatSlider, textField, colorPicker, enumPicker
 
-@docs configurable, Configuration, configuration, verticalPanel, intSlider, floatSlider, colorPicker, ConfigMsg
+
+## Customizing the example
+
+These are options you can apply to a configuration to add a few more bells and whistles to your examples:
+
+@docs withTitle, animatedWith, makeFormOnTop, makeFormOnRight, withCustomCss
 
 -}
 
 import Browser exposing (Document, UrlRequest(..))
+import Browser.Events
 import Browser.Navigation as Navigation exposing (Key)
 import Color exposing (Color)
 import Hex
-import Html exposing (Html, div, text, th)
+import Html exposing (Html, details, div, text, th)
 import Html.Attributes exposing (class, href, style)
 import Html.Events exposing (onClick)
 import Http
@@ -48,23 +92,19 @@ import Url.Parser exposing ((<?>))
 import Url.Parser.Query as QueryParser
 
 
-
--- Common Views
-
-
-{-| Displays a loading spinner indicating an operation in process.
+{-| Displays an animated loading spinner indicating an operation is in progress.
 -}
 loading : List (Html.Attribute msg) -> Html msg
 loading attrs =
     div (style "display" "flex" :: style "flex-direction" "column" :: style "align-items" "center" :: style "max-width" "900px" :: style "margin-top" "50px" :: attrs)
         [ Html.node "style" [] [ text """
-        .lds-ring {
+        .example-ring {
             display: inline-block;
             position: relative;
             width: 60px;
             height: 60px;
         }
-        .lds-ring div {
+        .example-ring div {
             box-sizing: border-box;
             display: block;
             position: absolute;
@@ -73,19 +113,19 @@ loading attrs =
             margin: 8px;
             border: 4px solid #fff;
             border-radius: 50%;
-            animation: lds-ring 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+            animation: example-ring 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
             border-color: #000 transparent transparent transparent;
         }
-        .lds-ring div:nth-child(1) {
+        .example-ring div:nth-child(1) {
             animation-delay: -0.45s;
         }
-            .lds-ring div:nth-child(2) {
+        .example-ring div:nth-child(2) {
             animation-delay: -0.3s;
         }
-        .lds-ring div:nth-child(3) {
+        .example-ring div:nth-child(3) {
             animation-delay: -0.15s;
         }
-        @keyframes lds-ring {
+        @keyframes example-ring {
             0% {
                 transform: rotate(0deg);
             }
@@ -94,12 +134,12 @@ loading attrs =
             }
         }
 """ ]
-        , div [ class "lds-ring" ] [ div [] [], div [] [], div [] [] ]
-        , div [ class "lds-label" ] [ text "Loading..." ]
+        , div [ class "example-ring" ] [ div [] [], div [] [], div [] [] ]
+        , div [ class "example-label" ] [ text "Loading..." ]
         ]
 
 
-{-| Shows a friendly (albeit generic) error message based on an HTTP.Error type. Useful for showing when an HTTP request fails.
+{-| Shows a friendly (albeit generic) error message based on the `HTTP.Error` type. Useful for showing when an HTTP request fails.
 
 You can optionally give it a message. If you do, then certain errror will get a "Try again?" button for retrying the request.
 
@@ -169,257 +209,511 @@ error maybeTryAgain err =
 
 
 
--- Mutli-tab apps
-
-
-stringify : String -> String
-stringify =
-    String.toLower
-        >> String.map
-            (\char ->
-                case char of
-                    ' ' ->
-                        '-'
-
-                    ':' ->
-                        '-'
-
-                    a ->
-                        a
-            )
-
-
-parse : List ( String, a ) -> Url -> Maybe String
-parse conf url =
-    url.fragment
-
-
-view : List ( String, a ) -> (a -> Html msg) -> Model -> Document Msg
-view config viewFn model =
-    let
-        ( route, subView ) =
-            if model.view == "" then
-                List.head config
-                    |> Maybe.map (\( r, m ) -> ( r, viewFn m ))
-                    |> Maybe.withDefault ( "Not found", Html.text "404 not found" )
-
-            else
-                List.filter (\( l, _ ) -> stringify l == model.view) config
-                    |> List.head
-                    |> Maybe.map (\( r, m ) -> ( r, viewFn m ))
-                    |> Maybe.withDefault ( "Not found", Html.text "404 not found" )
-    in
-    { body = [ Html.map (always Noop) subView ], title = route }
-
-
-{-| Shows a simple tab bar with a title and links to the individual views.
--}
-navigation : String -> List ( String, a ) -> Html msg
-navigation title config =
-    Html.p [] <|
-        text
-            (title ++ ": ")
-            :: (List.intersperse (text " | ") <| List.map (\( a, _ ) -> linkTo a [] [ text a ]) config)
-
-
-{-| A simple app that shows different tabs based on a string identifier. This identifier will be as the fragment in the URL.
--}
-switchableViews : List ( String, a ) -> (a -> Html msg) -> Program () Model Msg
-switchableViews config viewFn =
-    Browser.application
-        { init = init config
-        , update = update
-        , view = view config viewFn
-        , subscriptions = always Sub.none
-        , onUrlRequest = onUrlRequest config
-        , onUrlChange = onUrlChange config
-        }
-
-
-type Msg
-    = Noop
-    | View String
-    | ExternalUrl String
-
-
-type alias Model =
-    { view : String
-    , key : Key
-    }
-
-
-init : List ( String, a ) -> () -> Url -> Key -> ( Model, Cmd Msg )
-init config () url key =
-    case parse config url of
-        Just viewPath ->
-            ( { view = viewPath, key = key }, Cmd.none )
-
-        Nothing ->
-            let
-                defaultPath =
-                    List.head config
-                        |> Maybe.map Tuple.first
-                        |> Maybe.withDefault ""
-                        |> stringify
-            in
-            ( { view = "", key = key }, Navigation.replaceUrl key ("#" ++ defaultPath) )
-
-
-update : Msg -> Model -> ( Model, Cmd Msg )
-update msg model =
-    case msg of
-        Noop ->
-            ( model, Cmd.none )
-
-        View viewPath ->
-            ( { model | view = viewPath }
-            , if model.view == viewPath then
-                Cmd.none
-
-              else
-                Navigation.pushUrl model.key ("#" ++ viewPath)
-            )
-
-        ExternalUrl url ->
-            ( model, Navigation.load url )
-
-
-onUrlRequest : List ( String, a ) -> UrlRequest -> Msg
-onUrlRequest config urlRequest =
-    case urlRequest of
-        Internal url ->
-            View (parse config url |> Maybe.withDefault "")
-
-        External url ->
-            ExternalUrl url
-
-
-onUrlChange : List ( String, a ) -> Url -> Msg
-onUrlChange config url =
-    View (parse config url |> Maybe.withDefault "")
-
-
-{-| Makes a link to a particular identifier (i.e. this is a wrapper for the `<a>` element, but it will take care of setting up the approriate `href` attribute.)
--}
-linkTo : String -> List (Html.Attribute msg) -> List (Html msg) -> Html msg
-linkTo viewId attrs children =
-    let
-        hrefAttr =
-            href ("#" ++ stringify viewId)
-
-        attributes =
-            hrefAttr :: attrs
-    in
-    Html.a attributes children
-
-
-
 -- Configurable example
 
 
-{-| This type stores how to modify the model.
+type Model model
+    = Model
+        { key : Navigation.Key
+        , model : Wrapper model
+        }
+
+
+type Wrapper model
+    = Animating
+        { elapsed : Int
+        , interpolation : Float -> model
+        }
+    | Static model
+
+
+{-| All the details needed to make an example app get stored in here.
 -}
 type Configuration model
-    = Configuration model (List (Field model))
+    = Configuration
+        { initialModel : model
+        , fields : List (Field model)
+        , animation : Maybe ( model -> model -> Float -> model, Int )
+        , title : Maybe String
+        , css : Maybe String
+        , layout : Layout
+        }
+    | InvalidConfiguration String
 
 
+type Layout
+    = FormOnTop
+    | FormOnRight
+
+
+{-| -}
 type Field model
     = Field
         { label : String
         , getter : model -> String
         , setter : String -> model -> model
-        , type_ : FieldType
+        , view : model -> Html (ConfigMsg model)
         }
-
-
-type FieldType
-    = IntSlider Int Int
-    | FloatSlider Float Float
-    | ColorPicker
 
 
 {-| -}
 type ConfigMsg model
     = ConfigMsg (model -> model)
     | ConfigNoop
+    | Tick Int
 
 
-{-| Accepts the initial (or default) model as well as a list of fields that describe how to modify the model.
+{-| This is the more flexible way of building example configurations. You will need to provide an initial model which is what users will see before they mess with the forms.
+
+Then you need to provide some fields that will show as the form.
+
 -}
 configuration : model -> List (Field model) -> Configuration model
-configuration =
-    Configuration
+configuration initialModel fields =
+    Configuration { initialModel = initialModel, fields = fields, animation = Nothing, title = Nothing, css = Nothing, layout = FormOnRight }
 
 
-{-| Modify an int field in the model. Takes a label, a getter, a setter and min/max bounds on the value. Renders as a slider in the form.
+mapConfig fn config =
+    case config of
+        Configuration cfg ->
+            Configuration (fn cfg)
+
+        InvalidConfiguration reason ->
+            InvalidConfiguration reason
+
+
+{-| Animate transitions between different model states. To do this, you will need to supply an interpolation function,
+that takes a starting state, a target state and a parameter that goes betwen 0 and 1.
+
+Also, you should provide a duration in ms.
+
 -}
-intSlider : String -> (model -> Int) -> (Int -> model -> model) -> Int -> Int -> Field model
-intSlider title getter setter min max =
+animatedWith : (model -> model -> Float -> model) -> Int -> Configuration model -> Configuration model
+animatedWith interp t =
+    mapConfig (\config -> { config | animation = Just ( interp, t ) })
+
+
+{-| Add a title to your form. Will also set it as the HTML <title> tag.
+-}
+withTitle : String -> Configuration model -> Configuration model
+withTitle title =
+    mapConfig (\config -> { config | title = Just title })
+
+
+{-| For normal configurations we normally render the form on the right of the view. This will change it to be rendered on top.
+-}
+makeFormOnTop : Configuration model -> Configuration model
+makeFormOnTop =
+    mapConfig (\config -> { config | layout = FormOnTop })
+
+
+{-| Tabbed configurations render the form on the top of the view. This will change it to be rendered on the right.
+-}
+makeFormOnRight : Configuration model -> Configuration model
+makeFormOnRight =
+    mapConfig (\config -> { config | layout = FormOnRight })
+
+
+{-| Give this a block of CSS as a string and it will take care of adding it to the DOM with a proper tag.
+
+Useful for conveniently adding some flair without needing to mess with `Html`.
+
+Also note that the elements we add are style-able and have stable classes. Simply look through the generated DOM to find the appropriate class names.
+
+-}
+withCustomCss : String -> Configuration model -> Configuration model
+withCustomCss css =
+    mapConfig (\config -> { config | css = Just css })
+
+
+customField :
+    { label : String
+    , getter : model -> String
+    , setter : String -> model -> model
+    , view : model -> Html (ConfigMsg model)
+    }
+    -> Field model
+customField =
+    Field
+
+
+{-| Modify an int field in the model. Takes a label, min/max bounds on the value, a getter, and a setter. Renders as a slider in the form.
+-}
+intSlider : String -> { min : Int, max : Int } -> (model -> Int) -> (Int -> model -> model) -> Field model
+intSlider title { min, max } getter setter =
+    let
+        getter_ =
+            getter >> String.fromInt
+
+        setter_ =
+            String.toInt >> Maybe.withDefault min >> clamp min max >> setter
+    in
     Field
         { label = title
-        , getter = getter >> String.fromInt
-        , setter = \value -> setter (String.toInt value |> Maybe.withDefault min)
-        , type_ = IntSlider min max
+        , getter = getter_
+        , setter = setter_
+        , view =
+            \model ->
+                Html.span [ style "display" "table-cell", class "example-field", class "example-intSlider", class ("example-intSlider-" ++ stringify title) ]
+                    [ Html.input
+                        [ Html.Attributes.type_ "range"
+                        , Html.Events.onInput (\v -> ConfigMsg (setter_ v))
+                        , Html.Attributes.min (String.fromInt min)
+                        , Html.Attributes.max (String.fromInt max)
+                        , Html.Attributes.step "1"
+                        , Html.Attributes.value (getter_ model)
+                        ]
+                        []
+                    , Html.span [] [ text (getter_ model) ]
+                    ]
         }
 
 
-{-| Modify an float field in the model. Takes a label, a getter, a setter and min/max bounds on the value. Renders as a slider in the form.
+{-| Modify an float field in the model. Takes a label, min/max bounds on the value, a getter, and a setter. Renders as a slider in the form.
 -}
-floatSlider : String -> (model -> Float) -> (Float -> model -> model) -> Float -> Float -> Field model
-floatSlider title getter setter min max =
+floatSlider : String -> { min : Float, max : Float } -> (model -> Float) -> (Float -> model -> model) -> Field model
+floatSlider title { min, max } getter setter =
+    let
+        getter_ =
+            getter >> String.fromFloat
+
+        setter_ =
+            String.toFloat >> Maybe.withDefault min >> clamp min max >> setter
+    in
     Field
         { label = title
-        , getter = getter >> toFixed (precisionFixed (tickStep min max 200))
-        , setter = \value -> setter (String.toFloat value |> Maybe.withDefault min)
-        , type_ = FloatSlider min max
+        , getter = getter_
+        , setter = setter_
+        , view =
+            \model ->
+                Html.span []
+                    [ Html.input
+                        [ Html.Attributes.type_ "range"
+                        , Html.Events.onInput (\v -> ConfigMsg (setter_ v))
+                        , Html.Attributes.min (String.fromFloat min)
+                        , Html.Attributes.max (String.fromFloat max)
+                        , Html.Attributes.step (String.fromFloat ((max - min) / 200))
+                        , Html.Attributes.value (getter_ model)
+                        ]
+                        []
+                    , Html.span [] [ text (getter_ model) ]
+                    ]
         }
 
 
-{-| Modify an Color field in the model. Takes a label, a getter, and a setter. Renders as a color picker in the form.
+{-| Modify an Color field in the model (this type comes from avh4/elm-color). Takes a label, a getter, and a setter. Renders as a color picker in the form.
 -}
 colorPicker : String -> (model -> Color) -> (Color -> model -> model) -> Field model
 colorPicker title getter setter =
+    let
+        getter_ =
+            getter >> colorToHex
+
+        setter_ =
+            hexToColor >> setter
+    in
     Field
         { label = title
-        , getter = getter >> colorToHex
-        , setter = hexToColor >> setter
-        , type_ = ColorPicker
+        , getter = getter_
+        , setter = setter_
+        , view =
+            \model ->
+                Html.input
+                    [ Html.Attributes.type_ "color"
+                    , Html.Events.onInput (\v -> ConfigMsg (setter_ v))
+                    , Html.Attributes.value (getter_ model)
+                    ]
+                    []
         }
 
 
-{-| An application type where the view will simply render some output based on some input that we want the user to modify.
+{-| Modify an String field in the model). Takes a label, a getter, and a setter. Renders as a text field in the form.
+-}
+textField : String -> (model -> String) -> (String -> model -> model) -> Field model
+textField title getter setter =
+    Field
+        { label = title
+        , getter = getter
+        , setter = setter
+        , view =
+            \model ->
+                Html.input
+                    [ Html.Attributes.type_ "text"
+                    , Html.Events.onInput (\v -> ConfigMsg (setter v))
+                    , Html.Attributes.value (getter model)
+                    ]
+                    []
+        }
 
-This application will take care of dealing with the model and messages as well as persisting the model state to the URL and then restoring it on reload.
+
+{-| Pick from a list of values. Takes a label, a list of values and their labels (the labels are what you will see in the UI as well as what will be used in the URL), a getter and a setter.
+-}
+enumPicker : String -> List ( String, a ) -> (model -> a) -> (a -> model -> model) -> Field model
+enumPicker title opts getter setter =
+    case opts of
+        [] ->
+            Field
+                { label = title
+                , getter = always ""
+                , setter = \val model -> model
+                , view = \_ -> Html.text "needs at least on option"
+                }
+
+        ( defaultLabel, defaultOption ) :: options ->
+            let
+                stringified =
+                    List.map (Tuple.mapFirst stringify) options
+
+                findByValue val =
+                    List.filter (\( label, option ) -> option == val) stringified
+                        |> List.head
+                        |> Maybe.withDefault ( stringify defaultLabel, defaultOption )
+                        |> Tuple.first
+
+                findByLabel lab =
+                    List.filter (\( label, option ) -> label == lab) stringified
+                        |> List.head
+                        |> Maybe.withDefault ( defaultLabel, defaultOption )
+                        |> Tuple.second
+
+                getter_ =
+                    getter >> findByValue
+
+                setter_ =
+                    findByLabel >> setter
+            in
+            Field
+                { label = title
+                , getter = getter_
+                , setter = setter_
+                , view =
+                    \model ->
+                        (( defaultLabel, defaultOption ) :: options)
+                            |> List.map
+                                (\( label, value ) ->
+                                    Html.a
+                                        [ Html.Attributes.href "#"
+                                        , onClick (ConfigMsg (setter value))
+                                        , Html.Attributes.class
+                                            (if value == getter model then
+                                                "selected"
+
+                                             else
+                                                "unselected"
+                                            )
+                                        ]
+                                        [ text label ]
+                                )
+                            |> List.intersperse (text " | ")
+                            |> Html.span []
+                }
+
+
+{-| This is the most simple example app, where you want to switch between a discrete set of pre-made configurations.
+
+You need to provide a form label, and a list of labels and possible models.
 
 -}
-configurable : Configuration model -> (model -> Html (ConfigMsg model)) -> Program () ( Key, model ) (ConfigMsg model)
-configurable config view_ =
-    Browser.application
-        { init = \_ url key -> ( ( key, parseConfigUrl url config ), Cmd.none )
-        , update =
-            \msg ( key, model ) ->
-                case msg of
-                    ConfigMsg fn ->
-                        let
-                            newModel =
-                                fn model
-                        in
-                        ( ( key, newModel ), Navigation.replaceUrl key (serialize config newModel) )
+tabbed : String -> List ( String, model ) -> Configuration model
+tabbed label options =
+    case options of
+        ( initialLabel, initialModel ) :: rest ->
+            configuration initialModel [ enumPicker label options identity always ]
+                |> makeFormOnTop
 
-                    ConfigNoop ->
-                        ( ( key, model ), Cmd.none )
-        , view = \( _, model ) -> { title = "Example", body = [ view_ model ] }
-        , subscriptions = always Sub.none
-        , onUrlRequest = \_ -> ConfigNoop
-        , onUrlChange = \_ -> ConfigNoop
+        [] ->
+            InvalidConfiguration "You need to provide at least one option to Example.tabbed"
+
+
+{-| This is a type alias for `Program`, mostly useful for type annotations, as not using the type alias
+exposes too many implementation details of how this module is implemented.
+
+I recommend using it prefixed:
+
+    main : Example.Program Model
+
+-}
+type alias Program model =
+    Platform.Program () (Model model) (ConfigMsg model)
+
+
+{-| Start an application based on a `view` (this is your example) and a `Configuration`.
+-}
+application : (model -> Html (ConfigMsg model)) -> Configuration model -> Program model
+application view_ config =
+    case config of
+        InvalidConfiguration reason ->
+            let
+                crash t =
+                    crash t
+            in
+            Browser.application
+                { init = \_ url key -> ( Model { key = key, model = Animating { elapsed = 0, interpolation = crash } }, Cmd.none )
+                , view = \_ -> { title = reason, body = [ Html.h1 [] [ Html.text "Example Configuration Error" ], Html.p [] [ Html.text reason ] ] }
+                , update = \msg model -> ( model, Cmd.none )
+                , subscriptions = \_ -> Sub.none
+                , onUrlRequest = \_ -> ConfigNoop
+                , onUrlChange = \_ -> ConfigNoop
+                }
+
+        Configuration details ->
+            Browser.application
+                { init = \_ url key -> ( Model { key = key, model = Static (parseConfigUrl url details.initialModel details.fields) }, Cmd.none )
+                , update =
+                    \msg (Model data) ->
+                        case msg of
+                            ConfigMsg fn ->
+                                let
+                                    model =
+                                        case data.model of
+                                            Static m ->
+                                                m
+
+                                            Animating { elapsed, interpolation } ->
+                                                case details.animation of
+                                                    Just ( _, duration ) ->
+                                                        interpolation (easeing (toFloat elapsed / toFloat duration))
+
+                                                    Nothing ->
+                                                        -- impossible state :(
+                                                        interpolation 1
+
+                                    newModel =
+                                        fn model
+
+                                    newWrapped =
+                                        case details.animation of
+                                            Just ( interp, _ ) ->
+                                                Animating { interpolation = interp model newModel, elapsed = 0 }
+
+                                            Nothing ->
+                                                Static newModel
+                                in
+                                ( Model { data | model = newWrapped }, Navigation.replaceUrl data.key (serialize details.fields newModel) )
+
+                            Tick delta ->
+                                case data.model of
+                                    Static m ->
+                                        ( Model data, Cmd.none )
+
+                                    Animating animationState ->
+                                        case details.animation of
+                                            Just ( _, duration ) ->
+                                                if duration > animationState.elapsed + delta then
+                                                    ( Model { data | model = Animating { animationState | elapsed = animationState.elapsed + delta } }, Cmd.none )
+
+                                                else
+                                                    ( Model { data | model = Static (animationState.interpolation 1) }, Cmd.none )
+
+                                            Nothing ->
+                                                ( Model { data | model = Static (animationState.interpolation 1) }, Cmd.none )
+
+                            ConfigNoop ->
+                                ( Model data, Cmd.none )
+                , view =
+                    \(Model { model }) ->
+                        { title = details.title |> Maybe.withDefault "Example"
+                        , body =
+                            withCss details.css
+                                (case model of
+                                    Static m ->
+                                        layout details.layout (view_ m) (form details.fields details.title m)
+
+                                    Animating { elapsed, interpolation } ->
+                                        case details.animation of
+                                            Just ( _, duration ) ->
+                                                layout details.layout (view_ (interpolation (easeing (toFloat elapsed / toFloat duration)))) (form details.fields details.title (interpolation 1))
+
+                                            Nothing ->
+                                                -- impossible state :(
+                                                layout details.layout (view_ (interpolation 1)) (form details.fields details.title (interpolation 1))
+                                )
+                        }
+                , subscriptions =
+                    case details.animation of
+                        Just _ ->
+                            \(Model { model }) ->
+                                case model of
+                                    Static _ ->
+                                        Sub.none
+
+                                    Animating _ ->
+                                        Browser.Events.onAnimationFrameDelta (round >> Tick)
+
+                        Nothing ->
+                            always Sub.none
+                , onUrlRequest = \_ -> ConfigNoop
+                , onUrlChange = \_ -> ConfigNoop
+                }
+
+
+layout : Layout -> Html (ConfigMsg model) -> Html (ConfigMsg model) -> Html (ConfigMsg model)
+layout expectedLayout userView configForm =
+    div
+        [ class "example-layout"
+        , class
+            (case expectedLayout of
+                FormOnTop ->
+                    "example-layout-vertical"
+
+                FormOnRight ->
+                    "example-layout-horizontal"
+            )
+        ]
+        [ configForm
+        , userView
+        ]
+
+
+withCss : Maybe String -> Html (ConfigMsg model) -> List (Html (ConfigMsg model))
+withCss maybeCss view =
+    [ Html.node "style" [ Html.Attributes.type_ "text/css" ] [ Html.text ("""
+        .example-form {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         }
+        .example-layout-horizontal {
+            display: flex;
+            flex-direction: row-reverse;
+        }
+        .example-form-fields {
+            display: table;
+        }
+        .example-field {
+            display: table-row;
+        }
+        .example-field-label {
+            display: table-cell;
+            padding-bottom: 8px;
+        }
+    """ ++ Maybe.withDefault "" maybeCss) ], view ]
 
 
-parseConfigUrl : Url -> Configuration model -> model
-parseConfigUrl url (Configuration initial fields) =
+easeing : Float -> Float
+easeing time =
+    let
+        t =
+            time * 2
+    in
+    if t <= 1 then
+        t ^ 3 / 2
+
+    else
+        ((t - 2) ^ 3 + 2) / 2
+
+
+parseConfigUrl : Url -> model -> List (Field model) -> model
+parseConfigUrl url initialModel fields =
     case fields of
         [] ->
-            initial
+            initialModel
+
+        [ Field onlyField ] ->
+            case Url.Parser.parse (Url.Parser.fragment identity) { url | path = "/" } of
+                Just (Just frag) ->
+                    onlyField.setter frag initialModel
+
+                _ ->
+                    initialModel
 
         (Field first) :: tail ->
             let
@@ -442,15 +736,20 @@ parseConfigUrl url (Configuration initial fields) =
             in
             case Url.Parser.parse (Url.Parser.top <?> parser) { url | path = "/" } of
                 Just fn ->
-                    fn initial
+                    fn initialModel
 
                 Nothing ->
-                    initial
+                    initialModel
 
 
-serialize : Configuration model -> model -> String
-serialize (Configuration _ fields) model =
-    List.map (\(Field field) -> Url.Builder.string (stringify field.label) (field.getter model)) fields |> Url.Builder.toQuery
+serialize : List (Field model) -> model -> String
+serialize fields model =
+    case fields of
+        [ Field singleField ] ->
+            "#" ++ singleField.getter model
+
+        _ ->
+            List.map (\(Field field) -> Url.Builder.string (stringify field.label) (field.getter model)) fields |> Url.Builder.toQuery
 
 
 {-| Renders a form for changing the configuration in a vertical layout.
@@ -458,51 +757,21 @@ serialize (Configuration _ fields) model =
 The first argument is a heading for the form.
 
 -}
-verticalPanel : String -> Configuration model -> model -> Html (ConfigMsg model)
-verticalPanel title (Configuration _ fields) model =
-    div [ style "font-family" "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif" ]
-        [ Html.h2 [] [ text title ]
-        , div [ style "display" "table" ] <|
+form : List (Field model) -> Maybe String -> model -> Html (ConfigMsg model)
+form fields title model =
+    div [ class "example-form" ]
+        [ case title of
+            Just title_ ->
+                Html.h2 [ class "example-form-title" ] [ text title_ ]
+
+            Nothing ->
+                text ""
+        , div [ class "example-form-fields" ] <|
             List.map
                 (\(Field field) ->
-                    div [ style "display" "table-row" ]
-                        [ Html.label [ style "display" "table-cell", style "padding-bottom" "8px", Html.Attributes.for (stringify field.label) ] [ text field.label ]
-                        , case field.type_ of
-                            IntSlider min max ->
-                                Html.span [ style "display" "table-cell" ]
-                                    [ Html.input
-                                        [ Html.Attributes.type_ "range"
-                                        , Html.Events.onInput (\v -> ConfigMsg (field.setter v))
-                                        , Html.Attributes.min (String.fromInt min)
-                                        , Html.Attributes.max (String.fromInt max)
-                                        , Html.Attributes.step "1"
-                                        , Html.Attributes.value (field.getter model)
-                                        ]
-                                        []
-                                    , Html.span [] [ text (field.getter model) ]
-                                    ]
-
-                            FloatSlider min max ->
-                                Html.span []
-                                    [ Html.input
-                                        [ Html.Attributes.type_ "range"
-                                        , Html.Events.onInput (\v -> ConfigMsg (field.setter v))
-                                        , Html.Attributes.min (String.fromFloat min)
-                                        , Html.Attributes.max (String.fromFloat max)
-                                        , Html.Attributes.step (String.fromFloat ((max - min) / 200))
-                                        , Html.Attributes.value (field.getter model)
-                                        ]
-                                        []
-                                    , Html.span [] [ text (field.getter model) ]
-                                    ]
-
-                            ColorPicker ->
-                                Html.input
-                                    [ Html.Attributes.type_ "color"
-                                    , Html.Events.onInput (\v -> ConfigMsg (field.setter v))
-                                    , Html.Attributes.value (field.getter model)
-                                    ]
-                                    []
+                    div [ class "example-field" ]
+                        [ Html.label [ class "example-field-label", Html.Attributes.for (stringify field.label) ] [ text field.label ]
+                        , field.view model
                         ]
                 )
                 fields
@@ -622,3 +891,11 @@ colorToHex color =
             String.padLeft 2 '0' (Hex.toString (round (255 * value)))
     in
     "#" ++ digit red ++ digit green ++ digit blue
+
+
+stringify : String -> String
+stringify =
+    String.toLower
+        >> String.trim
+        >> String.replace ":" ""
+        >> String.replace " " "-"

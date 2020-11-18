@@ -1,16 +1,21 @@
 # elm-examples-helper
 
-A simple package that makes elm-visualization examples simpler. You can use it too if you want.
+When writing examples either as documentation for packages or for blog posts, one has two conflicting goals:
+
+1. The example should be as short as possible, removing as much boilerplate as can be done, and focusing the example code on the point being made.
+2. The running example should look good, be engaging (interactive/animated) and be robust (proper error handling).
+
+The aim of this package is to help you reconcile these goals by adding simple, yet powerful behaviors to your example.
 
 ## Installation
 
-```elm
+```sh
 elm install gampleman/elm-examples-helper
 ```
 
 ## What's included?
 
-Some helpers for making examples that do HTTP:
+A `loading` and `error` views suitable for doing HTTP in an example. This allows your example to focus on the "happy path" while still getting a nice loading spinner and a solid error message (with optional retry functionality):
 
 ```elm
 
@@ -22,6 +27,20 @@ type Model
     = Loading
     | Error Http.Error
     | Loaded { data : List String }
+
+
+view : Model -> Html Msg
+view model =
+    case model of
+        Loading ->
+            Example.loading []
+
+        Error err ->
+            Example.error (Just Retry) err
+
+        Loaded data ->
+            viewData data
+
 
 type Msg
     = RecievedData (Result Http.Error (List RawBrand))
@@ -60,75 +79,78 @@ update msg model =
             ( model, Cmd.none )
 
 
-view : Model -> Html Msg
-view model =
-    case model of
-        Loading ->
-            Example.loading []
 
-        Error err ->
-            Example.error (Just Retry) err
-
-        Loaded data ->
-            viewData data
 ```
 
-An application type for doing tabbed UIs:
+An application type for doing examples, where a view function accepts some config. This application type gives you a form for doing the configuring, while also giving you a url based shareing feature for free.
+
+The simplest form allows you to switch between predefined views:
 
 ```elm
 import Example
 
-exampleConfig : List ( String, Model )
-exampleConfig =
-    [ ( "First page", { page = 1 })
-    , ( "Second page", { page = 2 })
-    ]
-
-main =
-    Example.switchableViews exampleConfig view
+type alias Model =
+    { page : Int
+    }
 
 view : Model -> Html msg
 view model =
     div []
-    [ Example.navigation "Pages" exampleConfig
-    , h2 [] [text (String.fromInt model.page)]
+    [ h2 [] [text (String.fromInt model.page)]
     ]
+
+main : Example.Program Model
+main =
+    Example.tabbed "pages"
+        [ ( "First page", { page = 1 })
+        , ( "Second page", { page = 2 })
+        ]
+        |> Example.application view
 ```
 
-An application type for having a configurable view:
+You can of course configure it to use a more complex form, as well as enabling some bells and whistles (like animated transitions):
 
 ```elm
 import Example
 import Color exposing (Color)
+import Interpolation
 
 type alias Model =
-    { fromColorValue : Color
-    , toColorValue : Color
+    { start : Color
+    , end : Color
     , count : Int
     }
 
+view : Model -> Html msg
+view model =
+    yourCoolViewFunction
 
-configuration : Example.Configuration Model
-configuration =
+
+main : Example.Program Model
+main =
     Example.configuration
-        { fromColorValue = Color.rgb255 0 255 0
-        , toColorValue = Color.rgb255 255 2 0
+        { start = Color.rgb255 0 255 0
+        , end = Color.rgb255 255 2 0
         , count = 50
         }
         [ Example.colorPicker "Start Color" .fromColorValue (\v m -> { m | fromColorValue = v })
         , Example.colorPicker "End Color" .toColorValue (\v m -> { m | toColorValue = v })
-        , Example.intSlider "Number of Colors" .count (\v m -> { m | count = v }) 3 100
+        , Example.intSlider "Number of Colors" { min = 3, max = 100} .count (\v m -> { m | count = v })
         ]
+        |> Example.withTitle "My super cool example"
+        |> Example.withCustomCss """
+            .some-class { opacity: 0.5; }
+            """
+        |> Example.animatedWith interpolator
+        |> Example.application view
 
-view : Model -> Html (Example.ConfigMsg Model)
-view model =
-    Html.div [ style "display" "flex", style "min-height" "100vh", style "padding-right" "10px" ]
-        [ viewColors model
-        , Example.verticalPanel "Color Space Interpolations" configuration model
-        ]
 
-main =
-    Example.configurable configuration view
+interpolator : Model -> Model -> Float -> Model
+interpolator from to t =
+    { start = Interpolation.hsl from.start to.start t
+    , end = Interpolation.hsl from.end to.end t
+    , count = Interpolation.count from.count to.count t
+    }
 ```
 
 ## License

@@ -3,7 +3,7 @@
     "name": "gampleman/elm-examples-helper",
     "summary": "A simple package that makes elm-visualization examples simpler",
     "license": "MIT",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "exposed-modules": [
         "Example"
     ],
